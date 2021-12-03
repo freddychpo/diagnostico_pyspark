@@ -23,26 +23,27 @@ class Transformer(Writer):
         # Uncomment when you want write your final output
         self.write(df)
 
-    def read_input(self) -> DataFrame:
+    def read_input(self, pathfile) -> DataFrame:
         """
         :return: a DataFrame readed from csv file
         """
         return self.spark.read \
+            .option("csv") \
             .option(INFER_SCHEMA, True) \
             .option(HEADER, True) \
-            .csv(INPUT_PATH)
+            .csv(pathfile)
 
     def clean_data(self, df: DataFrame) -> DataFrame:
         """
         :param df: is a DataFrame with players information
         :return: a DataFrame with filter transformation applied
-        column team_position != null && column short_name != null && column overall != null
+        column player_cat == "A" | player_cat == "B"
+        column player_cat == "C" & potential_vs_overall > 1.15
+        column player_cat == "D" & potential_vs_overall > 1.25       
         """
-        df = df.filter(
-            (short_name.column().isNotNull()) &
-            (short_name.column().isNotNull()) &
-            (overall.column().isNotNull()) &
-            (team_position.column().isNotNull())
+        df = df.filter(('player_cat == "A"' | 'player_cat == "b"' )  \
+                 .filter('player_cat == "C"' & "potential_vs_overall > 1.15" ) \
+                     .filter('player_cat == "D"' & "potential_vs_overall > 1.25")
         )
         return df
 
@@ -53,30 +54,43 @@ class Transformer(Writer):
         """
         df = df.select(
             short_name.column(),
-            overall.column(),
+            long_name.column(),
+            age.column(),
             height_cm.column(),
-            team_position.column(),
-            catHeightByPosition.column()
+            weight_kg.column(),
+            nationality.column(),
+            club_name.column(),
+            overall.column(),
+            potential.column(),
+            team_position.column()
         )
         return df
 
     def example_window_function(self, df: DataFrame) -> DataFrame:
         """
-        :param df: is a DataFrame with players information (must have team_position and height_cm columns)
-        :return: add to the DataFrame the column "cat_height_by_position"
+        :param df: is a DataFrame with players information (must have nationality and team_position columns)
+        :return: add to the DataFrame the column "player_cat"
              by each position value
-             cat A for if is in 20 players tallest
-             cat B for if is in 50 players tallest
-             cat C for the rest
+             cat A for if is in the best 3 players of its nationality
+             cat B for if is in the best 5 players of its nationality
+             cat C for if is in the best 10 players of its nationality
+             cat D for the rest
         """
         w: WindowSpec = Window \
-            .partitionBy(team_position.column()) \
-            .orderBy(height_cm.column().desc())
+            .partitionBy(nationality.column(), team_position.column()) \
+            .orderBy(overall.column())
         rank: Column = f.rank().over(w)
 
-        rule: Column = f.when(rank < 10, "A") \
-            .when(rank < 50, "B") \
-            .otherwise("C")
+        rule: Column = f.when(rank >= 3, "A") \
+            .when(rank >= 5, "B") \
+            .when(rank >= 10, "C") \
+            .otherwise("D")
 
-        df = df.withColumn(catHeightByPosition.name, rule)
+        df = df.withColumn("player_cat", rule)
         return df
+
+    def add_PotentialVsOverall_Column(self, df: DataFrame) -> DataFrame:
+        df = df.witchColumn("potential_vs_overall", potential.column() / overall.column())
+
+    def filter_less_23(self, df: DataFrame) -> DataFrame:
+        df = df.filter(age.colun()<23)
